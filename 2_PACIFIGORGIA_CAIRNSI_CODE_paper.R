@@ -1,4 +1,7 @@
-#Code for calculate alpha and beta diversity of bacterial community associatead wit parrotfish feces 
+##Code for the analysis of bacterial community associated with Pacifigorgia cairnsi under ENSO conditions
+##By Sandra Montaño Salazar
+
+#Load the libraries
 
 library(phyloseq)
 library(devtools)
@@ -13,10 +16,14 @@ library(tidyverse)
 library(scales)
 library(grid)
 library(reshape2)
+library(microbiome)
+library(ggpubr)
+library(RColorBrewer)
+library(microbiomeutilities)
+library(viridis)
+library(tibble)
 
-
-
-#Files from qiime2 for create a phyloseq object
+#Input files from qiime2 outputs for create a phyloseq object
 asv<- read_excel("E:/CAIRNSI/OTU_236.xlsx")
 tax<- read_excel("E:/CAIRNSI/TAX_236.xlsx")
 metadata <- read_excel("E:/CAIRNSI/metadatosCAIRNSI.xlsx")
@@ -62,7 +69,7 @@ ggplot(prevph1, aes(TotalAbundance, Prevalence / nsamples(phca),color=Phylum)) +
   scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
   facet_wrap(~Phylum) + theme(legend.position="none")
 
-#For create a Rarefaction curve
+#For create a Rarefaction curve (supplementary file)
 rarecurve(t(otu_table(phca)), step=50, cex=0.5)
 
 #Rarefy the data for calculate alpha and beta diversity
@@ -70,6 +77,7 @@ rarecurve(t(otu_table(phca)), step=50, cex=0.5)
 ps.rarefied = rarefy_even_depth(ph2, rngseed=4567, replace=F)
 
 ##Alpha diversity and plot
+
 alpha.diversity <- estimate_richness(ps.rarefied, measures = c("Observed","Chao1", "Shannon","Simpson"))
 alpha.diversity#table with values
 
@@ -108,7 +116,6 @@ summary(glm.temp)
 plot(Shannon ~ temp, data = adiv)
 abline(glm.temp)
 
-
 ##Beta diversity and NMDS ordination 
 
 ps_bray <- phyloseq::distance(ph2, method = "bray")
@@ -128,7 +135,7 @@ plot_ordination(
   ) +
   geom_point(aes(color = yecat), alpha = 1, size = 3, shape = 16)
 
-##PERMANOVA for evaluate differences between the four types of samples using Bray Curtis dissimilarities
+#PERMANOVA for evaluate differences between the four types of samples using Bray Curtis dissimilarities
 
 metbd <- as(sample_data(ps.rarefied), "data.frame")
 
@@ -142,31 +149,20 @@ permutest(dispr)
 
 ##Taxa barplot exploration
 
-#at genus level
+#To graph at phylum level and the relative abundances
 
-dat.aglo = tax_glom(ph2, taxrank = "Genus")
-dat.trans = transform_sample_counts(dat.aglo, function(x) x/sum(x))
+ps_phylum <- phyloseq::tax_glom(ph2, "Phylum")
+phyloseq::taxa_names(ps_phylum) <- phyloseq::tax_table(ps_phylum)[, "Phylum"]
+phyloseq::otu_table(ps_phylum)[1:5, 1:5]
 
-dat.dataframe = psmelt(dat.trans)
-dat.agr = aggregate(Abundance~yecat+Genus, data=dat.dataframe, FUN=mean)
+phyloseq::psmelt(ps_phylum) %>%
+  ggplot(data = ., aes(x = yecat, y = Abundance)) +
+  geom_boxplot(outlier.shape  = NA) +
+  geom_jitter(aes(color = OTU), height = 0, width = .2) +
+  labs(x = "", y = "Abundance\n") +
+  facet_wrap(~ OTU, scales = "free")
 
-ggplot(dat.agr, aes(x=yecat, y=Abundance, fill=Genus)) + geom_bar(stat="identity", color = "black")
-
-#graph at phylum level
-top80 <- names(sort(taxa_sums(ph2), decreasing=TRUE)[1:80])
-top80 #shows 80 results
-
-dat.aglo = tax_glom(ph2, taxrank = "Phylum")
-test1 = psmelt(dat.aglo)
-dat.trans = transform_sample_counts(dat.aglo, function(x) x/sum(x))
-dat.trans
-prune.dat.two = prune_taxa(top80, dat.trans)
-dat.dataframe = psmelt(prune.dat.two)
-dat.agr = aggregate(Abundance~yecat+Phylum, data=dat.dataframe, FUN=mean)
-
-ggplot(dat.agr, aes(x=yecat, y=Abundance, fill=Phylum)) + geom_bar(stat="identity", color = "black")
-
-##graph at genus level and statistics
+#To explore at genus level, relative abundances per year and the sd of the procentages 
 
 top150 <- names(sort(taxa_sums(ph2), decreasing=TRUE)[1:150])
 top150 #shows 150 results
@@ -182,9 +178,10 @@ dat.agr = aggregate(Abundance~yecat+Genus, data=dat.dataframe, FUN=mean)
 ggplot(dat.agr, aes(x=yecat, y=Abundance, fill=Genus)) + geom_bar(stat="identity", color = "black")
 prune.dat.two
 
-by(dat.agr$Abundance,dat.agr$Genus,sd)
+by(dat.agr$Abundance,dat.agr$Genus,sd)#sd for genus relative abundance
 
-##Deseq2 test 
+##For the differential expressed ASV according to their relative abundance using Deseq2 test 
+
 library(DESeq2)
 pds <- phyloseq_to_deseq2(ph2, ~yecat)
 pds = DESeq(pds)
@@ -200,3 +197,33 @@ alpha=0.05
 sigtab <- res[which(res$padj < alpha), ]
 sigtab <- cbind(as(sigtab,"data.frame"), as(tax_table(ph2)[rownames(sigtab), ], "matrix"))
 head(sigtab,20)
+
+##For the Heatmap
+ps1.c <- format_to_besthit(ph2)
+
+heat.sample <- plot_taxa_heatmap(phca, subset.top = 25,
+                                 VariableA = "yecat",
+                                 heatcolors = brewer.pal(100, "Blues"),
+                                 transformation = "compositional")
+
+brewer.pal(100, "Blues")
+
+## For the Venn diagram
+
+myotutable <- read.csv("~/CAIRNSI/venn_otu_ampvis.csv", check.names = FALSE)
+mymetadata <- read.csv("~/CAIRNSI/met_venn_ampvis.csv", check.names = FALSE)
+
+library(ampvis2)
+d <- amp_load(otutable = myotutable,
+              metadata = mymetadata)
+amp_venn(
+  d,
+  group_by = "Year",
+  cut_a = 0.1,
+  cut_f = 10,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = FALSE
+)
+
+
